@@ -1,0 +1,18 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build
+bin/
+obj/
+
+# Pacotes
+*.nupkg
+*.snupkg
+packages/
+
+# Configurações locais
+appsettings*.json
