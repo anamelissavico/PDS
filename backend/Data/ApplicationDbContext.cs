@@ -10,6 +10,9 @@ namespace quizzAPI.Data
         // Tabela de usuários existente
         public DbSet<User> Users { get; set; }
 
+        // Tabela para quizzes
+        public DbSet<Quizz> Quizzes { get; set; }
+
         // Tabela para perguntas do quiz
         public DbSet<Pergunta> Perguntas { get; set; }
 
@@ -20,13 +23,35 @@ namespace quizzAPI.Data
                 .HasIndex(u => u.Email)
                 .IsUnique();
 
+            // Configuração da tabela Quizz
+            modelBuilder.Entity<Quizz>(entity =>
+            {
+                entity.ToTable("Quizz");
+
+                entity.Property(e => e.Tema)
+                      .HasMaxLength(255)
+                      .IsRequired();
+
+                entity.Property(e => e.NivelEscolar)
+                      .HasMaxLength(100)
+                      .IsRequired(false);
+
+                entity.Property(e => e.Dificuldade)
+                      .HasMaxLength(100)
+                      .IsRequired(false);
+
+                // Relacionamento 1:N com Perguntas
+                entity.HasMany(q => q.Perguntas)
+                      .WithOne(p => p.Quizz)
+                      .HasForeignKey(p => p.QuizzId)
+                      .OnDelete(DeleteBehavior.Cascade);
+            });
+
             // Configuração da tabela Pergunta
             modelBuilder.Entity<Pergunta>(entity =>
             {
-                // Mapeia para a tabela correta
                 entity.ToTable("Perguntas");
 
-                // Textos longos como NVARCHAR(MAX)
                 entity.Property(e => e.PerguntaTexto)
                       .HasColumnType("NVARCHAR(MAX)")
                       .IsRequired();
@@ -47,12 +72,10 @@ namespace quizzAPI.Data
                       .HasColumnType("NVARCHAR(MAX)")
                       .IsRequired();
 
-                // Resposta correta
                 entity.Property(e => e.RespostaCorreta)
                       .HasMaxLength(1)
                       .IsRequired();
 
-                // Campos extras opcionais
                 entity.Property(e => e.NivelEscolar)
                       .HasMaxLength(50)
                       .IsRequired(false);

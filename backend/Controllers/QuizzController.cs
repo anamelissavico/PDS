@@ -1,111 +1,177 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using quizzAPI.Data;
-using quizzAPI.Models.DTOs;
 using quizzAPI.Models;
+using quizzAPI.Models.DTOs;
 using quizzAPI.Services;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace QuizzAPI.Controllers
+namespace YourNamespace.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
     public class QuizzController : ControllerBase
     {
-        private readonly OpenAIService _openAIService;
         private readonly ApplicationDbContext _context;
+        private readonly OpenAIService _openAIService;
 
-        public QuizzController(OpenAIService openAIService, ApplicationDbContext context)
+        public QuizzController(ApplicationDbContext context, OpenAIService openAIService)
         {
-            _openAIService = openAIService;
             _context = context;
+            _openAIService = openAIService;
         }
 
-        // Endpoint para gerar quiz via OpenAI e salvar no banco
         [HttpPost("gerar")]
-        public async Task<IActionResult> GerarQuizz([FromBody] QuizRequest request)
+        public async Task<IActionResult> GerarQuizz([FromBody] Quizz request)
         {
             if (request == null)
                 return BadRequest("Requisição inválida.");
 
-            try
+            // 1) Criar quizz
+            var quizz = new Quizz
             {
-                // Chama o serviço que gera o quiz e retorna a lista já desserializada
-                List<PerguntaQuizz> perguntasGeradas = await _openAIService.GerarQuizzDTOAsync(
-                    request.NivelEscolar,
-                    request.Tema,
-                    request.NumeroPerguntas,
-                    request.Dificuldade
-                );
-
-                if (perguntasGeradas == null || perguntasGeradas.Count == 0)
-                    return BadRequest("Não foi possível gerar perguntas do quiz.");
-
-                // Salva cada pergunta no banco com validação de nulos
-                foreach (var p in perguntasGeradas)
-                {
-                    var pergunta = new Pergunta
-                    {
-                        PerguntaTexto = string.IsNullOrEmpty(p.PerguntaTexto) ? "Pergunta não definida" : p.PerguntaTexto,
-                        AlternativaA = string.IsNullOrEmpty(p.AlternativaA) ? "A" : p.AlternativaA,
-                        AlternativaB = string.IsNullOrEmpty(p.AlternativaB) ? "B" : p.AlternativaB,
-                        AlternativaC = string.IsNullOrEmpty(p.AlternativaC) ? "C" : p.AlternativaC,
-                        AlternativaD = string.IsNullOrEmpty(p.AlternativaD) ? "D" : p.AlternativaD,
-                        RespostaCorreta = string.IsNullOrEmpty(p.RespostaCorreta) ? "A" : p.RespostaCorreta,
-                        NivelEscolar = string.IsNullOrEmpty(request.NivelEscolar) ? null : request.NivelEscolar,
-                        Tema = string.IsNullOrEmpty(request.Tema) ? null : request.Tema,
-                        Dificuldade = string.IsNullOrEmpty(request.Dificuldade) ? null : request.Dificuldade
-                    };
-
-                    _context.Perguntas.Add(pergunta);
-                }
-
-                await _context.SaveChangesAsync();
-
-                // Validação das perguntas usando DTO
-                var perguntasJson = JsonSerializer.Serialize(perguntasGeradas);
-                List<PerguntaValidacaoDTO> validacoes = await _openAIService.ValidarQuizzAsync(
-                    request.Tema,
-                    request.NivelEscolar,
-                    request.Dificuldade,
-                    perguntasJson
-                );
-
-                // Retorna perguntas + validações
-                return Ok(new
-                {
-                    Perguntas = perguntasGeradas,
-                    Validacoes = validacoes
-                });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Erro: {ex.Message}\nStackTrace: {ex.StackTrace}\nInnerException: {ex.InnerException?.Message}");
-            }
-        }
-
-        // Endpoint de teste rápido para salvar uma pergunta manualmente
-        [HttpPost("salvando")]
-        public IActionResult TesteSalvarPergunta()
-        {
-            var pergunta = new Pergunta
-            {
-                PerguntaTexto = "Qual é a capital do Brasil?",
-                AlternativaA = "Rio de Janeiro",
-                AlternativaB = "São Paulo",
-                AlternativaC = "Brasília",
-                AlternativaD = "Salvador",
-                RespostaCorreta = "C",
-                NivelEscolar = "Ensino Fundamental",
-                Tema = "Geografia",
-                Dificuldade = "Fácil"
+                Tema = $"Quiz sobre {request.Tema}",
+                NivelEscolar = request.NivelEscolar,
+                Dificuldade = request.Dificuldade,
+                NumeroPerguntas = request.NumeroPerguntas
             };
 
-            _context.Perguntas.Add(pergunta);
-            _context.SaveChanges();
+            _context.Quizzes.Add(quizz);
+            await _context.SaveChangesAsync();
 
-            return Ok("Pergunta salva com sucesso!");
+            // 2) Gerar perguntas com justificativa
+            List<PerguntaQuizz> perguntasGeradas = await _openAIService.GerarQuizzDTOAsync(
+                request.NivelEscolar,
+                request.Tema,
+                request.NumeroPerguntas,
+                request.Dificuldade
+            );
+
+            if (perguntasGeradas == null || !perguntasGeradas.Any())
+                return BadRequest("Não foi possível gerar perguntas do quiz.");
+
+            // 3) Serializar perguntas para validação
+            string perguntasJson = JsonSerializer.Serialize(perguntasGeradas);
+
+            // 4) Validar perguntas (não altera justificativa)
+            await _openAIService.ValidarQuizzAsync(
+                request.Tema,
+                request.NivelEscolar,
+                request.Dificuldade,
+                perguntasJson
+            );
+
+            // 5) Salvar perguntas no banco
+            foreach (var p in perguntasGeradas)
+            {
+                var pergunta = new Pergunta
+                {
+                    PerguntaTexto = p.PerguntaTexto,
+                    AlternativaA = p.AlternativaA,
+                    AlternativaB = p.AlternativaB,
+                    AlternativaC = p.AlternativaC,
+                    AlternativaD = p.AlternativaD,
+                    RespostaCorreta = p.RespostaCorreta,
+                    Justificativa = p.Justificativa, // mantém a justificativa original
+                    NivelEscolar = request.NivelEscolar,
+                    Tema = request.Tema,
+                    Dificuldade = request.Dificuldade,
+                    QuizzId = quizz.Id
+                };
+
+                _context.Perguntas.Add(pergunta);
+            }
+
+            await _context.SaveChangesAsync();
+
+            // 6) Retornar perguntas já com justificativa
+            return Ok(new
+            {
+                QuizzId = quizz.Id,
+                Tema = quizz.Tema,
+                Perguntas = perguntasGeradas.Select(p => new
+                {
+                    p.PerguntaTexto,
+                    p.AlternativaA,
+                    p.AlternativaB,
+                    p.AlternativaC,
+                    p.AlternativaD,
+                    p.RespostaCorreta,
+                    p.Justificativa
+                })
+            });
+        }
+        [HttpGet("{quizzId}/perguntas")]
+        public async Task<IActionResult> ObterPerguntasPorQuizz(int quizzId)
+        {
+            var perguntas = await _context.Perguntas
+                .Where(p => p.QuizzId == quizzId)
+                .Select(p => new
+                {
+                    p.Id,
+                    p.PerguntaTexto,
+                    p.AlternativaA,
+                    p.AlternativaB,
+                    p.AlternativaC,
+                    p.AlternativaD,
+                    p.RespostaCorreta,
+                    p.Justificativa
+                })
+                .ToListAsync();
+
+            if (!perguntas.Any())
+                return NotFound($"Nenhuma pergunta encontrada para o QuizzId {quizzId}.");
+
+            return Ok(new { perguntas });
+        }
+
+        // POST: Avaliar respostas do usuário e calcular pontos
+      
+        [HttpPost("avaliar")]
+        public async Task<IActionResult> AvaliarQuizz([FromBody] AvaliacaoQuizzRequest dto)
+        {
+            if (dto == null || dto.Respostas == null || !dto.Respostas.Any())
+                return BadRequest("Nenhuma resposta enviada.");
+
+            var user = await _context.Users.FindAsync(dto.UserId);
+            if (user == null)
+                return NotFound("Usuário não encontrado.");
+
+            // Busca todas as perguntas do quizz de uma vez só
+            var perguntas = await _context.Perguntas
+                .Where(p => p.QuizzId == dto.QuizzId)
+                .ToDictionaryAsync(p => p.Id);
+
+            int pontosObtidos = 0;
+
+            foreach (var resposta in dto.Respostas)
+            {
+                if (perguntas.TryGetValue(resposta.PerguntaId, out var pergunta))
+                {
+                    if (pergunta.RespostaCorreta == resposta.AlternativaEscolhida)
+                    {
+                        pontosObtidos += pergunta.Dificuldade switch
+                        {
+                            "Fácil" => 15,
+                            "Média" => 20,
+                            "Dificil" => 30,
+                            _ => 0
+                        };
+                    }
+                }
+            }
+
+            user.Pontos += pontosObtidos;
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                Pontos = pontosObtidos,
+                PontosTotaisUsuario = user.Pontos
+            });
         }
     }
 }
